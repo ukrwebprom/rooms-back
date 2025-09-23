@@ -23,7 +23,7 @@ router.post("/", async (req, res) => {
 
   try {
     const { rows } = await query(
-      "INSERT INTO public.users (name, email) VALUES ($1, $2) RETURNING id, name, email",
+      "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id, name, email",
       [name, email]
     );
     res.status(201).json(rows[0]);

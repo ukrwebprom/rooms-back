@@ -13,6 +13,7 @@ function createToken(payload) {
 }
 
 router.get("/profile", authMiddleware, async (req, res) => {
+  console.log('profile request:', req.user);
   try {
     const { rows } = await query(
       "SELECT id, name, email FROM users WHERE id = $1",

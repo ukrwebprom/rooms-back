@@ -40,14 +40,10 @@ const AbilitiesByRole = {
 };
 
 // Фейковая структура отелей/организаций
-const FakeOrgs = [
-    { id: 'org-1', name: 'Nemo Group' },
-  ];
-  
 const FakeProperties = [
-    { id: 'prop-101', orgId: 'org-1', name: 'Nemo Resort & Spa' },
-    { id: 'prop-102', orgId: 'org-1', name: 'Nemo Downtown' },
-  ];
+  { id: 'prop-101', name: 'Nemo Resort & Spa' },
+  { id: 'prop-102', name: 'Nemo Downtown' },
+];
 
 // Роут: GET /api/auth/test-login?role=manager&property=prop-101
 router.get('/test-login', (req, res) => {
@@ -60,10 +56,9 @@ router.get('/test-login', (req, res) => {
     const currentProperty = FakeProperties.find(p => p.id === forcedProperty) || FakeProperties[0];
   
     // Скоуп: массив доступных orgIds/propertyIds (имитируем, что юзер имеет доступ к обоим отелям)
-    const scopes = {
-      orgIds: FakeOrgs.map(o => o.id),
-      propertyIds: FakeProperties.map(p => p.id),
-    };
+   const scopes = {
+    propertyIds: FakeProperties.map((p) => p.id), // у юзера доступ к обоим
+  };
   
     // Фейковые данные пользователя
     const user = {
@@ -99,7 +94,6 @@ router.get('/test-login', (req, res) => {
       scopes,
       currentPropertyId: currentProperty.id,
       // дополнительно можно вернуть список properties/orgs для клиентского селектора
-      orgs: FakeOrgs,
       properties: FakeProperties,
     };
   
