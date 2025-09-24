@@ -73,7 +73,7 @@ router.post("/login", async (req, res) => {
   try {
     const { rows } = await query("SELECT * FROM users WHERE email = $1", [normalemail]);
     const user = rows[0];
-
+    console.log(user);
     if (!user) return res.status(401).json({ error: "INVALID_CREDENTIALS" });
 
     const isValid = await bcrypt.compare(password, user.password_hash);

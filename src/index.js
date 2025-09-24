@@ -2,6 +2,8 @@ const express = require("express");
 const cors = require("cors");
 
 require("dotenv").config();
+const u = new URL(process.env.DATABASE_URL || '');
+console.log('DB HOST:', u.host);
 
 const usersRouter = require("./routes/users");
 const authRouter = require("./routes/auth");
