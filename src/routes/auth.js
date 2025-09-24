@@ -130,7 +130,7 @@ router.post("/login", async (req, res) => {
     secure: false,
     sameSite: "lax",
     expires: expiresAt,
-    path: "/auth",
+    path: "/api/auth",
     });
 
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, status: user.status },  abilities, properties });
@@ -154,7 +154,7 @@ router.post("/logout", async (req, res) => {
     }
 
     // очищаем куку
-    res.clearCookie("refresh_token", { path: "/auth" });
+    res.clearCookie("refresh_token", { path: "/api/auth" });
 
     return res.json({ ok: true });
   } catch (e) {
