@@ -22,7 +22,15 @@ router.get("/profile", authMiddleware, async (req, res) => {
     const user = rows[0];
     if (!user) return res.status(404).json({ error: "USER_NOT_FOUND" });
 
-    res.json({ user });
+    const {rows:ab} = await query(
+      `select ability_key as key from user_abilities where user_id = $1`,
+      [user.id]
+    );
+    
+    const abilities = ab.map(r => r.key);
+    console.log(abilities);
+
+    res.json({ user, abilities });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "DB_ERROR", details: e.message });
