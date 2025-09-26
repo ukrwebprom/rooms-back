@@ -7,7 +7,7 @@ const authMiddleware = require("../middlewares/authMiddleware");
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1m";
 
 function createToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -46,11 +46,16 @@ router.get("/profile", authMiddleware, async (req, res) => {
       `select ability_key as key from user_abilities where user_id = $1`,
       [user.id]
     );
-    
     const abilities = ab.map(r => r.key);
-    console.log(abilities);
 
-    res.json({ user, abilities });
+    const {rows:prop} = await query(
+      `select property_id from user_properties where user_id = $1`,
+      [user.id]
+    );
+    const properties = prop.map(r => r.property_id);
+    
+
+    res.json({ user, abilities, properties });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "DB_ERROR", details: e.message });
