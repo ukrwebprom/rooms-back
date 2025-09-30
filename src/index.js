@@ -12,7 +12,7 @@ const allowedOrigins = [
 const usersRouter = require("./routes/users");
 const authRouter = require("./routes/auth");
 const propertiesRouter = require("./routes/properties");
-const authTest = require("./routes/auth-test");
+const clientsRouter = require("./routes/clients")
 
 
 const app = express();
@@ -30,7 +30,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 app.use("/api/users", usersRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/properties", propertiesRouter);
-app.use('/api/auth2', authTest);
+app.use('/api/clients', clientsRouter);
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, () => {
