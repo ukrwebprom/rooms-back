@@ -14,15 +14,12 @@ try {
       return res.status(400).json({ error: 'propertyId is required' });
     }
 
-    const hasQ = q.length >= 2;
-    const params = [propertyId, limit, offset];
+    const hasQ = q && q.length >= 2;
 
-    let where = `property_id = $1`;
+    let where;
+    let params;
+    
     if (hasQ) {
-      // сдвигаем параметры, чтобы первый был поисковый
-      params.unshift(`%${q.toLowerCase()}%`); // станет $1
-      params[1] = propertyId;                 // propertyId теперь $2
-      // поиск по имени/фамилии/почте/телефону (нормализованные поля)
       where = `
         property_id = $2 AND (
           lower(first_name) LIKE $1 OR
@@ -30,8 +27,12 @@ try {
           email_norm        LIKE $1 OR
           phone_norm        LIKE $1
         )`;
+      params = [`%${q.toLowerCase()}%`, propertyId, limit, offset]; // $1..$4
+    } else {
+      where = `property_id = $1`;
+      params = [propertyId, limit, offset]; // $1..$3
     }
-
+    
     const sql = `
       SELECT id, first_name, last_name, email, phone, created_at
       FROM clients
@@ -39,6 +40,7 @@ try {
       ORDER BY last_name NULLS LAST, first_name NULLS LAST, created_at DESC
       LIMIT $${hasQ ? 3 : 2} OFFSET $${hasQ ? 4 : 3};
     `;
+    
 
     const { rows } = await query(sql, params);
 
