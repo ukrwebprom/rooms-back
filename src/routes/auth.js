@@ -33,7 +33,6 @@ async function createRefreshToken(userId) {
 }
 
 router.get("/profile", authMiddleware, async (req, res) => {
-  console.log('profile request:', req.user);
   try {
     const { rows } = await query(
       "SELECT id, name, email FROM users WHERE id = $1",
@@ -43,7 +42,7 @@ router.get("/profile", authMiddleware, async (req, res) => {
     if (!user) return res.status(404).json({ error: "USER_NOT_FOUND" });
 
     const {rows:ab} = await query(
-      `select ability_key as key from user_abilities where user_id = $1`,
+      `select ability as key from user_abilities where user_id = $1`,
       [user.id]
     );
     const abilities = ab.map(r => r.key);
@@ -122,7 +121,7 @@ router.post("/login", async (req, res) => {
      const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
 
     const {rows:ab} = await query(
-      `select ability_key as key from user_abilities where user_id = $1`,
+      `select ability as key from user_abilities where user_id = $1`,
       [user.id]
     );
     
