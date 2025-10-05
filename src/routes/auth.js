@@ -48,7 +48,6 @@ router.get("/profile", authMiddleware, async (req, res) => {
     const abilities = ab.map(r => r.key);
 
     const {rows:properties} = await query(
-      // `select property_id from user_properties where user_id = $1`,
       `SELECT DISTINCT p.id AS property_id, p.name AS property_name
       FROM user_properties up
       JOIN properties p ON p.id = up.property_id

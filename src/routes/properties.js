@@ -11,9 +11,11 @@ const router = express.Router();
 router.get("/", auth, async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT id, name, description, address, phone, email, timezone, created_at
-         FROM public.properties
-        WHERE owner_id = $1
+      ` SELECT p.id, p.name, p.description, p.address, p.city, p.country, p.phone, p.email, p.created_at
+        FROM properties AS p
+        JOIN user_properties AS up
+        ON up.property_id = p.id
+        WHERE up.user_id = $1
         ORDER BY created_at DESC`,
       [req.user.id]
     );
@@ -134,8 +136,9 @@ router.post("/", auth, async (req, res) => {
       [req.user.id, prop.id]
     );
     await query("COMMIT");
-    res.status(201).json(rows[0]);
+    res.status(201).json(prop);
   } catch (e) {
+    await query('ROLLBACK');
     console.error(e);
     res.status(500).json({ error: "DB_ERROR", details: e.message });
   }
