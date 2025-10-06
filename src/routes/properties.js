@@ -109,6 +109,47 @@ router.get('/:propertyId/users', auth, async (req, res) => {
 });
 
 
+// GET /properties/:propertyId/room-classes  получить список типов номеров в отеле
+router.get('/:propertyId/room-classes', auth, async (req, res) => {
+  const { propertyId } = req.params;
+
+  // быстрая проверка UUID
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(propertyId);
+  if (!isUuid) return res.status(400).json({ error: 'BAD_PROPERTY_ID' });
+
+  try {
+    // проверим, что запрашивающий пользователь имеет доступ к этому отелю
+    const check = await query(
+      `SELECT 1 FROM user_properties
+        WHERE user_id = $1 AND property_id = $2
+        LIMIT 1`,
+      [req.user.id, propertyId]
+    );
+    if (check.rows.length === 0) {
+      return res.status(403).json({ error: 'FORBIDDEN' });
+    }
+
+    // собственно список категорий
+    const { rows } = await query(
+      `
+      SELECT id, name, code, created_at
+      FROM room_classes
+      WHERE property_id = $1
+      ORDER BY name ASC, created_at ASC
+      `,
+      [propertyId]
+    );
+
+    res.json(rows);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'DB_ERROR', details: e.message });
+  }
+});
+
+
+
 
 
 /**
