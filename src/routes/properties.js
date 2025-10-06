@@ -1,6 +1,7 @@
 const express = require("express");
 const { query } = require("../db");
 const auth = require("../middlewares/authMiddleware");
+const {requirePropertyAccess} = require('../middlewares/propertyPermission');
 
 const router = express.Router();
 
@@ -28,12 +29,8 @@ router.get("/", auth, async (req, res) => {
 
 
 // GET /properties/:propertyId - получить данные отеля
-router.get("/:propertyId", auth, async (req, res) => {
-  const { propertyId } = req.params;
-
-  // (опц.) быстрая валидация UUID, чтобы не долбить БД мусором
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(propertyId);
-  if (!isUuid) return res.status(400).json({ error: "BAD_PROPERTY_ID" });
+router.get("/:propertyId", auth, requirePropertyAccess(), async (req, res) => {
+  const propertyId = req.propertyId;
 
   try {
     const { rows } = await query(
@@ -62,21 +59,10 @@ router.get("/:propertyId", auth, async (req, res) => {
 
 // GET /properties/:propertyId/users получить пользователей имеющих доступ к отелю
 
-router.get('/:propertyId/users', auth, async (req, res) => {
-  const { propertyId } = req.params;
-  console.log("get users by:", propertyId);
-  // быстрая валидация UUID
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(propertyId);
-  if (!isUuid) return res.status(400).json({ error: 'BAD_PROPERTY_ID' });
+router.get('/:propertyId/users', auth, requirePropertyAccess(), async (req, res) => {
+  const propertyId = req.propertyId;
 
   try {
-    // проверяем, что вызывающий сам имеет доступ к этому property
-    const check = await query(
-      `SELECT 1 FROM user_properties WHERE user_id = $1 AND property_id = $2 LIMIT 1`,
-      [req.user.id, propertyId]
-    );
-    if (!check.rows.length) return res.status(403).json({ error: 'FORBIDDEN' });
-
     const { rows } = await query(
       `
       SELECT
@@ -110,27 +96,10 @@ router.get('/:propertyId/users', auth, async (req, res) => {
 
 
 // GET /properties/:propertyId/room-classes  получить список типов номеров в отеле
-router.get('/:propertyId/room-classes', auth, async (req, res) => {
-  const { propertyId } = req.params;
-
-  // быстрая проверка UUID
-  const isUuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(propertyId);
-  if (!isUuid) return res.status(400).json({ error: 'BAD_PROPERTY_ID' });
+router.get('/:propertyId/room-classes', auth, requirePropertyAccess(), async (req, res) => {
+  const propertyId = req.propertyId;
 
   try {
-    // проверим, что запрашивающий пользователь имеет доступ к этому отелю
-    const check = await query(
-      `SELECT 1 FROM user_properties
-        WHERE user_id = $1 AND property_id = $2
-        LIMIT 1`,
-      [req.user.id, propertyId]
-    );
-    if (check.rows.length === 0) {
-      return res.status(403).json({ error: 'FORBIDDEN' });
-    }
-
-    // собственно список категорий
     const { rows } = await query(
       `
       SELECT id, name, code, created_at
@@ -149,7 +118,52 @@ router.get('/:propertyId/room-classes', auth, async (req, res) => {
 });
 
 
+// POST /properties/:propertyId/room-classes добавить класс номеров в отель
+router.post('/:propertyId/room-classes', auth, requirePropertyAccess(), async (req, res) => {
+    const propertyId = req.propertyId;
+    const {
+      name,
+      code,
+    } = req.body || {};
+    // валидация
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'NAME_REQUIRED' });
+    }
 
+    const nm = String(name).trim();
+    const cd = code && String(code).trim() ? String(code).trim().toUpperCase() : null;
+
+    try {
+      const { rows } = await query(
+        `
+        INSERT INTO room_classes
+          (property_id, name, code)
+        VALUES
+          ($1, $2, $3)
+        RETURNING
+          id, property_id, name, code
+        `,
+        [
+          propertyId,
+          nm,
+          cd
+        ]
+      );
+
+      return res.status(201).json(rows[0]);
+    } catch (e) {
+      // ловим нарушение уникальности имени/кода внутри property
+      if (e.code === '23505') {
+        const payload = { error: 'DUPLICATE' };
+        if (e.constraint?.includes('name')) payload.field = 'name';
+        if (e.constraint?.includes('code')) payload.field = 'code';
+        return res.status(409).json(payload);
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
 
 
 /**
