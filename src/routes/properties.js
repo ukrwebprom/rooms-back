@@ -199,4 +199,82 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
+// DELETE /properties/:propertyId/room-classes/:classId
+router.delete('/:propertyId/room-classes/:classId', auth, requirePropertyAccess(), async (req, res) => {
+    const propertyId = req.propertyId;
+    const { classId } = req.params;
+
+    try {
+      const { rowCount } = await query(
+        `
+        DELETE FROM room_classes
+        WHERE id = $1 AND property_id = $2
+        `,
+        [classId, propertyId]
+      );
+
+      if (rowCount === 0) {
+        return res.status(404).json({ error: 'NOT_FOUND' });
+      }
+
+      return res.status(200).json({ ok: true, id: classId });
+    } catch (e) {
+      // FK violation (например, если rooms.room_class_id ссылается и стоит RESTRICT)
+      if (e.code === '23503') {
+        return res.status(409).json({ error: 'FOREIGN_KEY_CONSTRAINT' });
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
+
+// PATCH /properties/:propertyId/room-classes/:classId
+router.patch('/:propertyId/room-classes/:classId', auth, requirePropertyAccess(), async (req, res) => {
+    const propertyId = req.propertyId;
+    const { classId } = req.params;
+    let { name, code } = req.body || {};
+
+    // простая валидация
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'NAME_REQUIRED' });
+    }
+
+    // нормализация
+    name = String(name).trim();
+    code = code == null ? null : String(code).trim();
+    code = code ? code.toUpperCase() : null; // пустую строку превратим в NULL
+
+    try {
+      const { rows } = await query(
+        `
+        UPDATE public.room_classes
+           SET name = $1,
+               code = $2
+         WHERE id = $3
+           AND property_id = $4
+        RETURNING id, property_id, name, code, created_at
+        `,
+        [name, code, classId, propertyId]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'NOT_FOUND' });
+      }
+
+      return res.json(rows[0]);
+    } catch (e) {
+      // конфликт уникальности (если есть индексы уникальности на name/code внутри property)
+      if (e.code === '23505') {
+        const payload = { error: 'DUPLICATE' };
+        if (e.constraint?.includes('name')) payload.field = 'name';
+        if (e.constraint?.includes('code')) payload.field = 'code';
+        return res.status(409).json(payload);
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
+
 module.exports = router;
