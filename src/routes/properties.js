@@ -5,6 +5,13 @@ const {requirePropertyAccess} = require('../middlewares/propertyPermission');
 
 const router = express.Router();
 
+const norm = v => {
+  if (v === undefined) return undefined;       // поле не прислали — не трогаем
+  if (v === null) return null;
+  const s = String(v).trim();
+  return s === '' ? null : s;
+};
+
 /**
  * GET /api/properties
  * Вернуть все отели текущего пользователя
@@ -198,6 +205,70 @@ router.post("/", auth, async (req, res) => {
     res.status(500).json({ error: "DB_ERROR", details: e.message });
   }
 });
+
+
+/**
+ * PATCH /properties/:propertyId
+ * Body: { name, country, city, address, email, phone, description }
+ * Возвращает обновлённую запись.
+ */
+router.patch('/:propertyId', auth,  requirePropertyAccess(), async (req, res) => {
+    const id = req.propertyId;
+
+    // нормализация входных
+    const payload = {
+      name:        norm(req.body?.name),
+      country:     norm(req.body?.country),
+      city:        norm(req.body?.city),
+      address:     norm(req.body?.address),
+      email:       norm(req.body?.email),
+      phone:       norm(req.body?.phone),
+      description: norm(req.body?.description),
+    };
+
+    // простая валидация: если name прислали — не должен быть пустым/null
+    if ('name' in payload && !payload.name) {
+      return res.status(400).json({ error: 'NAME_REQUIRED' });
+    }
+
+    // строим SET только из присланных полей
+    const sets = [];
+    const vals = [];
+    let i = 1;
+    for (const [k, v] of Object.entries(payload)) {
+      if (v !== undefined) {
+        sets.push(`${k} = $${i++}`);
+        vals.push(v);
+      }
+    }
+
+    if (sets.length === 0) {
+      return res.status(400).json({ error: 'NO_FIELDS' });
+    }
+
+    vals.push(id); // последний параметр в WHERE
+
+    try {
+      const { rows } = await query(
+        `
+        UPDATE properties
+           SET ${sets.join(', ')}
+         WHERE id = $${vals.length}
+        RETURNING id, name, country, city, address, email, phone, description,
+                  created_at
+        `,
+        vals
+      );
+
+      if (rows.length === 0) return res.status(404).json({ error: 'NOT_FOUND' });
+      res.json(rows[0]);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
+
 
 // DELETE /properties/:propertyId/room-classes/:classId
 router.delete('/:propertyId/room-classes/:classId', auth, requirePropertyAccess(), async (req, res) => {
