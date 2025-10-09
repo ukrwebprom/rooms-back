@@ -348,4 +348,35 @@ router.patch('/:propertyId/room-classes/:classId', auth, requirePropertyAccess()
   }
 );
 
+// GET /properties/:propertyId/locations
+router.get('/:propertyId/locations', auth, requirePropertyAccess(), async (req, res) => {
+    const propertyId = req.propertyId;
+
+    try {
+      const { rows } = await query(
+        `
+        SELECT
+          id,
+          parent_id,
+          kind,
+          name,
+          code,
+          created_at
+        FROM public.locations
+        WHERE property_id = $1
+        ORDER BY parent_id NULLS FIRST, name ASC, created_at ASC
+        `,
+        [propertyId]
+      );
+
+      res.json(rows);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
+
+module.exports = router;
+
 module.exports = router;
