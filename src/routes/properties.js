@@ -12,6 +12,7 @@ const norm = v => {
   return s === '' ? null : s;
 };
 
+const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 /**
  * GET /api/properties
  * Вернуть все отели текущего пользователя
@@ -348,6 +349,8 @@ router.patch('/:propertyId/room-classes/:classId', auth, requirePropertyAccess()
   }
 );
 
+const KIND = new Set(['FLOOR','BUILDING','WING','ZONE','AREA','OTHER']);
+
 // GET /properties/:propertyId/locations
 router.get('/:propertyId/locations', auth, requirePropertyAccess(), async (req, res) => {
     const propertyId = req.propertyId;
@@ -377,6 +380,103 @@ router.get('/:propertyId/locations', auth, requirePropertyAccess(), async (req, 
   }
 );
 
-module.exports = router;
+// PATCH /properties/:propertyId/locations/:locationId
+router.patch('/:propertyId/locations/:locationId', auth, requirePropertyAccess(), async (req, res) => {
+
+    const propertyId = req.propertyId;
+    const locationId = req.params.locationId;
+
+    // body: { parent_id, kind, name, code }
+    let { parent_id, kind, name, code } = req.body || {};
+
+    // нормализация входных
+    // const norm = (v) => (v === undefined ? undefined : (v === null ? null : String(v).trim()));
+    parent_id = norm(parent_id);
+    kind      = norm(kind);
+    name      = norm(name);
+    code      = norm(code);
+
+    if (code === '') code = null;        // пустая строка -> NULL
+    if (parent_id === '') parent_id = null;
+
+    // базовые валидации
+    if (parent_id && !UUID_RX.test(parent_id)) {
+      return res.status(400).json({ error: 'BAD_PARENT_ID' });
+    }
+    if (parent_id && parent_id === locationId) {
+      return res.status(400).json({ error: 'PARENT_EQ_SELF' });
+    }
+    if (kind !== undefined && !KIND.has(kind)) {
+      return res.status(400).json({ error: 'BAD_KIND' });
+    }
+    if (name !== undefined && !name) {
+      return res.status(400).json({ error: 'NAME_REQUIRED' });
+    }
+
+    try {
+      // если передан parent_id — проверим, что он принадлежит тому же отелю
+      if (parent_id) {
+        const { rows: pchk } = await query(
+          `SELECT 1 FROM public.locations
+            WHERE id = $1 AND property_id = $2
+            LIMIT 1`,
+          [parent_id, propertyId]
+        );
+        if (!pchk.length) {
+          return res.status(400).json({ error: 'PARENT_NOT_IN_PROPERTY' });
+        }
+      }
+
+      // собираем динамический SET только из переданных полей
+      const sets = [];
+      const vals = [];
+      let i = 1;
+
+      if (parent_id !== undefined) { sets.push(`parent_id = $${i++}`); vals.push(parent_id); }
+      if (kind      !== undefined) { sets.push(`kind = $${i++}`);      vals.push(kind); }
+      if (name      !== undefined) { sets.push(`name = $${i++}`);      vals.push(name); }
+      if (code      !== undefined) { sets.push(`code = $${i++}`);      vals.push(code); }
+
+      if (sets.length === 0) {
+        return res.status(400).json({ error: 'NO_FIELDS' });
+      }
+
+      vals.push(locationId);   // $i
+      vals.push(propertyId);   // $i+1
+
+      const { rows } = await query(
+        `
+        UPDATE public.locations
+           SET ${sets.join(', ')}
+         WHERE id = $${i}
+           AND property_id = $${i + 1}
+        RETURNING id, parent_id, kind, name, code, created_at
+        `,
+        vals
+      );
+
+      if (!rows.length) {
+        return res.status(404).json({ error: 'NOT_FOUND' });
+      }
+
+      res.json(rows[0]);
+    } catch (e) {
+      // 23505 — нарушение уникальности (у тебя, вероятно, есть индексы:
+      // UNIQUE(property_id, parent_id, lower(name)) и UNIQUE(property_id, lower(code)) WHERE code IS NOT NULL)
+      if (e.code === '23505') {
+        const payload = { error: 'DUPLICATE' };
+        if (e.constraint?.includes('name')) payload.field = 'name';
+        if (e.constraint?.includes('code')) payload.field = 'code';
+        return res.status(409).json(payload);
+      }
+      // 23503 — нарушение внешнего ключа (например, плохой parent_id)
+      if (e.code === '23503') {
+        return res.status(409).json({ error: 'FK_CONSTRAINT' });
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
 
 module.exports = router;
