@@ -2,12 +2,17 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const cookie = require('cookie');
 const { query } = require("../db");
 const authMiddleware = require("../middlewares/authMiddleware");
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "15m";
+
+function hashRefresh(raw) {
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
 
 function createToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -15,7 +20,7 @@ function createToken(payload) {
 
 function generateRefreshToken() {
   const token = crypto.randomBytes(32).toString("hex"); // оригинал
-  const hash = crypto.createHash("sha256").update(token).digest("hex"); // хэш для БД
+  const hash = hashRefresh(token);
   return { token, hash };
 }
 
@@ -30,6 +35,19 @@ async function createRefreshToken(userId) {
   );
 
   return { token, expiresAt }; // этот token пойдёт в cookie
+}
+
+function setRefreshCookie(res, token, expiresAt) {
+  res.setHeader(
+    'Set-Cookie',
+    cookie.serialize('refresh_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production', // ставь true в проде
+      sameSite: 'lax',
+      expires: expiresAt,
+      path: '/api/auth',  // важно: совпадает с тем, как ты выставляешь при логине
+    })
+  );
 }
 
 router.get("/profile", authMiddleware, async (req, res) => {
@@ -172,6 +190,57 @@ router.post("/logout", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "LOGOUT_ERROR" });
+  }
+});
+
+
+/**
+ * POST /auth/refresh
+ * Возвращает { token } — новый access JWT
+ * и ротирует refresh cookie.
+ */
+router.post('/refresh', async (req, res) => {
+  try {
+    const raw = req.cookies?.refresh_token;
+    if (!raw) return res.status(401).json({ error: 'NO_REFRESH' });
+
+    const hash = hashRefresh(raw);
+
+    // Ищем действительный refresh в БД
+    const { rows } = await query(
+      `
+      SELECT rt.user_id, u.email
+      FROM public.refresh_tokens rt
+      JOIN public.users u ON u.id = rt.user_id
+      WHERE rt.token_hash = $1
+        AND rt.expires_at > now()
+      LIMIT 1
+      `,
+      [hash]
+    );
+
+    if (!rows.length) {
+      // токен просрочен/не найден — чистим куку на клиенте
+      setRefreshCookie(res, '', new Date(0));
+      return res.status(401).json({ error: 'BAD_REFRESH' });
+    }
+
+    const user = rows[0];
+
+    // Ротация refresh: удаляем старый
+    await query(`DELETE FROM public.refresh_tokens WHERE token_hash = $1`, [hash]);
+
+    // Создаём новый refresh и кладём в cookie
+    const { token: newRefresh, expiresAt } = await createRefreshToken(user.user_id);
+    setRefreshCookie(res, newRefresh, expiresAt);
+
+    // Генерим новый короткий access-токен
+    const access = createToken({ id: user.user_id, email: user.email });
+
+    return res.json({ token: access });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'SERVER_ERROR', details: e.message });
   }
 });
 

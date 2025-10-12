@@ -479,4 +479,106 @@ router.patch('/:propertyId/locations/:locationId', auth, requirePropertyAccess()
   }
 );
 
+/**
+ * POST /properties/:propertyId/locations
+ * Body: { parent_id?, kind, name, code? }
+ */
+router.post('/:propertyId/locations', auth, requirePropertyAccess(), async (req, res) => {
+    const propertyId = req.propertyId;
+
+    let { parent_id, kind, name, code } = req.body || {};
+
+    // нормализация
+    parent_id = norm(parent_id);
+    kind = norm(kind);
+    name = norm(name);
+    code = norm(code);
+    if (parent_id === '') parent_id = null;
+    if (code === '') code = null;
+
+    // валидация
+    if (!name) return res.status(400).json({ error: 'NAME_REQUIRED' });
+    if (!kind || !KIND.has(kind)) return res.status(400).json({ error: 'BAD_KIND' });
+    if (parent_id && !UUID_RX.test(parent_id))
+      return res.status(400).json({ error: 'BAD_PARENT_ID' });
+
+    try {
+      // если указан parent_id — проверяем, что он в том же отеле
+      if (parent_id) {
+        const { rows: pchk } = await query(
+          `SELECT 1 FROM public.locations
+            WHERE id = $1 AND property_id = $2
+            LIMIT 1`,
+          [parent_id, propertyId]
+        );
+        if (!pchk.length) {
+          return res.status(400).json({ error: 'PARENT_NOT_IN_PROPERTY' });
+        }
+      }
+
+      const { rows } = await query(
+        `
+        INSERT INTO public.locations (property_id, parent_id, kind, name, code)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, property_id, parent_id, kind, name, code, created_at
+        `,
+        [propertyId, parent_id, kind, name, code]
+      );
+
+      return res.status(201).json(rows[0]);
+    } catch (e) {
+      // уникальность (если есть индексы UNIQUE на (property_id,parent_id,lower(name)) и (property_id,lower(code)) WHERE code IS NOT NULL)
+      if (e.code === '23505') {
+        const payload = { error: 'DUPLICATE' };
+        if (e.constraint?.includes('name')) payload.field = 'name';
+        if (e.constraint?.includes('code')) payload.field = 'code';
+        return res.status(409).json(payload);
+      }
+      // FK ошибки
+      if (e.code === '23503') {
+        return res.status(409).json({ error: 'FK_CONSTRAINT' });
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
+
+// DELETE /properties/:propertyId/locations/:locationId
+router.delete('/:propertyId/locations/:locationId', auth, requirePropertyAccess(), async (req, res) => {
+    const propertyId = req.propertyId;
+    const { locationId } = req.params;
+
+    if (!UUID_RX.test(locationId)) {
+      return res.status(400).json({ error: 'BAD_LOCATION_ID' });
+    }
+
+    try {
+      const { rowCount } = await query(
+        `
+        DELETE FROM public.locations
+        WHERE id = $1
+          AND property_id = $2
+        `,
+        [locationId, propertyId]
+      );
+
+      if (rowCount === 0) {
+        return res.status(404).json({ error: 'NOT_FOUND' });
+      }
+
+      // успех
+      return res.status(204).send();
+    } catch (e) {
+      // Теоретически FK-ошибка, если есть внешние связи без ON DELETE SET NULL
+      if (e.code === '23503') {
+        return res.status(409).json({ error: 'FK_CONSTRAINT' });
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'DB_ERROR', details: e.message });
+    }
+  }
+);
+
+
 module.exports = router;
