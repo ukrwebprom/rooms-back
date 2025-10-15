@@ -6,6 +6,9 @@ const cookie = require('cookie');
 const { query } = require("../db");
 const authMiddleware = require("../middlewares/authMiddleware");
 
+const { OAuth2Client } = require('google-auth-library');
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "15m";
@@ -241,6 +244,115 @@ router.post('/refresh', async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'SERVER_ERROR', details: e.message });
+  }
+});
+
+router.post('/google', async (req, res) => {
+  try {
+    const { id_token } = req.body;
+    if (!id_token) return res.status(400).json({ error: 'NO_ID_TOKEN' });
+
+    // 1) Проверяем ID-токен Google
+    const ticket = await googleClient.verifyIdToken({
+      idToken: id_token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload() || {};
+    const g = {
+      sub: payload.sub,
+      email: (payload.email || '').toLowerCase(),
+      email_verified: payload.email_verified,
+      name: payload.name,
+      picture: payload.picture,
+      hd: payload.hd,
+    };
+    if (!g.sub || !g.email) return res.status(401).json({ error: 'INVALID_GOOGLE_TOKEN' });
+
+    // 3) Поиск / создание пользователя
+    let userRes = await query('SELECT * FROM users WHERE google_sub = $1', [g.sub]);
+    let user = userRes.rows[0];
+    console.log(user);
+
+    if (!user) {
+      // ищем по email
+      const byEmail = await query('SELECT * FROM users WHERE email = $1', [g.email]);
+      if (byEmail.rows.length) {
+        // связываем с существующим
+        const update = await query(
+          `UPDATE users
+             SET google_sub = $1,
+                 google_picture_url = $2,
+                 google_hd = $3,
+                 email_verified = COALESCE($4, email_verified),
+                 provider = CASE WHEN provider='local' THEN 'mixed' ELSE provider END,
+                 last_login_at = now()
+           WHERE id = $5
+           RETURNING *`,
+          [g.sub, g.picture, g.hd, g.email_verified, byEmail.rows[0].id]
+        );
+        user = update.rows[0];
+        console.log(user);
+      } else {
+        // создаём нового
+        const insert = await query(
+          `INSERT INTO users
+             (name, email, password_hash, google_sub, google_picture_url,
+              google_hd, email_verified, provider, last_login_at)
+           VALUES ($1,$2,NULL,$3,$4,$5,$6,'google',now())
+           RETURNING *`,
+          [g.name || '', g.email, g.sub, g.picture, g.hd, g.email_verified]
+        );
+        user = insert.rows[0];
+      }
+    } else {
+      await query(`UPDATE users SET last_login_at = now() WHERE id=$1`, [user.id]);
+    }
+
+    // 4) abilities и properties, как в /login
+    const ab = await query(
+      `select ability as key from user_abilities where user_id = $1`,
+      [user.id]
+    );
+    const abilities = ab.rows.map(r => r.key);
+
+    const prop = await query(
+      `SELECT DISTINCT p.id AS property_id, p.name AS property_name
+         FROM user_properties up
+         JOIN properties p ON p.id = up.property_id
+        WHERE up.user_id = $1
+        ORDER BY p.name`,
+      [user.id]
+    );
+    const properties = prop.rows;
+
+    // 5) Access + Refresh
+    const token = createToken({ id: user.id, email: user.email });
+    const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
+
+    res.cookie('refresh_token', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      expires: expiresAt,
+      path: '/api/auth',
+    });
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        status: user.status,
+        provider: user.provider,
+        picture: user.google_picture_url || user.picture_url || null,
+      },
+      abilities,
+      properties,
+      });
+  } catch (e) {
+    console.error('GOOGLE AUTH ERROR:', e);
+    res.status(401).json({ error: 'GOOGLE_AUTH_FAILED', details: e.message });
   }
 });
 
