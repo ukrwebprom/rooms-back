@@ -166,7 +166,7 @@ router.post("/login", async (req, res) => {
     path: "/api/auth",
     });
 
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email, status: user.status },  abilities, properties });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, status: user.status, role: user.role },  abilities, properties });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "DB_ERROR", details: e.message });
@@ -345,6 +345,7 @@ router.post('/google', async (req, res) => {
         email: user.email,
         status: user.status,
         provider: user.provider,
+        role: user.role,
         picture: user.google_picture_url || user.picture_url || null,
       },
       abilities,
